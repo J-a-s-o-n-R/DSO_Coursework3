@@ -1,0 +1,103 @@
+%% =========================================================================
+%  CST Curve Fitting  -  RAE2822  -  10 modes per surface
+%  Required files: CSTairfoil.m   cstObjective.m   RAE2822.dat
+% =========================================================================
+clear; clc; close all;
+%% --- Load and split data ------------------------------------------------
+data  = load('RAE2822.dat');
+data  = data(~any(isnan(data), 2), :);
+idx   = find(data(:,1) == 0);
+split = idx(2);
+x_upper = data(1:split-1, 1);
+y_upper = data(1:split-1, 2);
+x_lower = data(split:end, 1);
+y_lower = data(split:end, 2);
+%% --- Parameters ---------------------------------------------------------
+N1     = 0.5;
+N2     = 1.0;
+nModes = 10;
+%% --- Starting point and objectives --------------------------------------
+A0  = zeros(1, nModes);   % 10 coefficients per surface
+objUpper = @(A) cstObjectiveSingle(A, x_upper, y_upper, N1, N2);
+objLower = @(A) cstObjectiveSingle(A, x_lower, y_lower, N1, N2);
+%% --- fminunc ------------------------------------------------------------
+options = optimoptions('fminunc', ...
+'Algorithm',              'quasi-newton', ...
+'Display',                'iter', ...
+'MaxIterations',          5000, ...
+'MaxFunctionEvaluations', 50000, ...
+'OptimalityTolerance',    1e-10, ...
+'StepTolerance',          1e-10);
+fprintf('\n=== Optimising upper surface ===\n');
+[A_upper_opt, fval_upper, ~, output_upper] = fminunc(objUpper, A0, options);
+fprintf('\n=== Optimising lower surface ===\n');
+[A_lower_opt, fval_lower, ~, output_lower] = fminunc(objLower, A0, options);
+%% --- Print results ------------------------------------------------------
+fprintf('\n=========================================================\n');
+fprintf('  %-6s  %-20s  %-20s\n','Mode','A_upper','A_lower');
+fprintf('  %s\n', repmat('-',1,50));
+for i = 1:nModes
+fprintf('  %-6d  %+20.10f  %+20.10f\n', i, A_upper_opt(i), A_lower_opt(i));
+end
+fprintf('\n  Final SSE  -  Upper: %.6e   Lower: %.6e\n', fval_upper, fval_lower);
+fprintf('  Iterations -  Upper: %d   Lower: %d\n', output_upper.iterations, output_lower.iterations);
+fprintf('=========================================================\n\n');
+%% --- Capture convergence history ----------------------------------------
+optHist = optimoptions(options, 'Display','off', 'OutputFcn', @captureHistory);
+setappdata(0,'fv',[]); setappdata(0,'ov',[]);
+fminunc(objUpper, A0, optHist);
+fv_upper = getappdata(0,'fv');
+ov_upper = getappdata(0,'ov');
+setappdata(0,'fv',[]); setappdata(0,'ov',[]);
+fminunc(objLower, A0, optHist);
+fv_lower = getappdata(0,'fv');
+ov_lower = getappdata(0,'ov');
+%% --- Figure 1: Airfoil + CST fit ----------------------------------------
+x_plot      = linspace(0, 1, 500);
+y_cst_upper = CSTairfoil(A_upper_opt, N1, N2, x_plot);
+y_cst_lower = CSTairfoil(A_lower_opt, N1, N2, x_plot);
+figure('Color','w','Position',[50 500 900 420]);
+plot(x_upper(:), y_upper(:), 'bo', 'MarkerSize',5, 'DisplayName','Upper data'); hold on;
+plot(x_lower(:), y_lower(:), 'rs', 'MarkerSize',5, 'DisplayName','Lower data');
+plot(x_plot(:), y_cst_upper(:), 'b-',  'LineWidth',2, 'DisplayName','CST upper');
+plot(x_plot(:), y_cst_lower(:), 'r--', 'LineWidth',2, 'DisplayName','CST lower');
+axis equal; grid on; box on;
+xlabel('x/c','Color','k'); ylabel('y/c','Color','k');
+lgd = legend('Location','northeast');
+set(lgd,'TextColor','k','Color','w','EdgeColor','k');
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11,'GridColor','k','MinorGridColor','k');
+%% --- Figure 2: Convergence ----------------------------------------------
+figure('Color','w','Position',[50 50 1000 420]);
+subplot(2,2,1);
+semilogy(fv_upper,'b-','LineWidth',2);
+xlabel('Iteration','Color','k'); ylabel('Objective (SSE)','Color','k');
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11);
+subplot(2,2,2);
+semilogy(ov_upper,'r-','LineWidth',2);
+xlabel('Iteration','Color','k'); ylabel('First-order Optimality','Color','k');
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11);
+subplot(2,2,3);
+semilogy(fv_lower,'b-','LineWidth',2);
+xlabel('Iteration','Color','k'); ylabel('Objective (SSE)','Color','k');
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11);
+subplot(2,2,4);
+semilogy(ov_lower,'r-','LineWidth',2);
+xlabel('Iteration','Color','k'); ylabel('First-order Optimality','Color','k');
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11);
+%% --- Figure 3: Residuals ------------------------------------------------
+res_upper = y_upper(:) - CSTairfoil(A_upper_opt, N1, N2, x_upper(:)')';
+res_lower = y_lower(:) - CSTairfoil(A_lower_opt, N1, N2, x_lower(:)')';
+figure('Color','w','Position',[100 50 900 350]);
+plot(x_upper(:), res_upper, 'b-o','MarkerSize',4,'DisplayName','Upper'); hold on;
+plot(x_lower(:), res_lower, 'r-s','MarkerSize',4,'DisplayName','Lower');
+yline(0,'k--','HandleVisibility','off');
+xlabel('x/c','Color','k'); ylabel('y_{actual} - y_{CST}','Color','k');
+lgd = legend();
+set(lgd,'TextColor','k','Color','w','EdgeColor','k');
+grid on; box on;
+set(gca,'Color','w','XColor','k','YColor','k','FontSize',11);
+%% --- Save figures as PNG ------------------------------------------------
+exportgraphics(figure(1), 'CST_fit.png',         'Resolution',300);
+exportgraphics(figure(2), 'CST_convergence.png', 'Resolution',300);
+exportgraphics(figure(3), 'CST_residuals.png',   'Resolution',300);
+fprintf('Figures saved as PNG.\n');
